@@ -14,6 +14,6 @@ scikit-learn>=1.1.0
 mistralai>=0.0.7
 
 # PyTorch CPU-only (vérifie ta version de Python et adapte cp38 → cp39 ou cp310 si besoin)
-torch==2.2.0  # CPU-only, pas de GPU
+torch==2.2.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html  # CPU-only, pas de GPU
 # Facultatif : uniquement si tu utilises TensorFlow
 # tensorflow-cpu==2.7.0  # plus léger si vraiment nécessaire
