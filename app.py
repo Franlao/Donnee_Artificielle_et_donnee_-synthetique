@@ -56,14 +56,15 @@ from Avec_AI.demo_app import (
     plot_correlation_comparison,
     plot_pca_comparison,
     render_dynamic_artificial_data_tab,
-    render_synthetic_data_tab
+    render_synthetic_data_tab,
+    render_about_page
 )
 
 # Importer la fonction render_ai_methods_tab depuis le package AI_Methods
 from Avec_AI.AI_Method import render_ai_methods_tab
 
 # Créer les onglets
-tab1, tab2, tab3 = st.tabs(["Données Artificielles", "Données Synthétiques", "Méthodes d'IA"])
+tab1, tab2, tab3, tab4 = st.tabs(["Données Artificielles", "Données Synthétiques", "Méthodes d'IA", "À propos du projet"])
 
 # Remplir chaque onglet avec le contenu correspondant
 with tab1:
@@ -74,41 +75,23 @@ with tab2:
 
 with tab3:
     render_ai_methods_tab()
+    
+with tab4:
+    render_about_page()
 
 # Instructions d'utilisation dans la barre latérale
 with st.sidebar:
     st.title("Guide d'utilisation")
     
     st.markdown("""
-    ### Données Artificielles
+   
+    ### À propos du projet
     
-    Utilisez cet onglet pour générer des données à partir de distributions statistiques que vous définissez.
-    
-    1. Définissez les paramètres pour chaque variable
-    2. Spécifiez les corrélations entre variables numériques
-    3. Cliquez sur "Générer les Données Artificielles"
-    4. Explorez les visualisations et téléchargez les données
-    
-    ### Données Synthétiques
-    
-    Utilisez cet onglet pour générer des données synthétiques basées sur des données réelles.
-    
-    1. Chargez un fichier CSV contenant vos données réelles
-    2. Sélectionnez les colonnes à inclure
-    3. Choisissez la méthode de génération
-    4. Cliquez sur "Générer les Données Synthétiques"
-    5. Comparez les distributions et téléchargez les données
-    
-    ### Méthodes d'IA
-    
-    Utilisez cet onglet pour explorer les approches avancées basées sur l'intelligence artificielle.
-    
-    #### IA pour Données Synthétiques:
-    - GAN: Réseaux antagonistes génératifs
-    - VAE: Auto-encodeurs variationnels
-    
-    #### IA pour Données Artificielles:
-    - LLM: Grands modèles de langage (via API Mistral)
+    Consultez cet onglet pour comprendre:
+    - Les concepts de données artificielles et synthétiques
+    - Les fonctionnalités détaillées de chaque module
+    - Les cas d'utilisation concrets
+    - Les informations techniques
     """)
     
     st.markdown("---")

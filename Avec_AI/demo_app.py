@@ -11,7 +11,7 @@ import base64
 import json
 from typing import Dict, List, Union, Tuple, Any, Optional
 import uuid
-from .missing_methods_tab import show_missing_values_tab
+from Avec_AI.AI_Method.missing_values_handler import missing_values_module
 
 # Fonctions pour générer des données artificielles
 def generate_artificial_data(params: Dict[str, Any], n_samples: int = 1000) -> pd.DataFrame:
@@ -1003,6 +1003,12 @@ def render_synthetic_data_tab():
     Interface utilisateur pour la génération de données synthétiques
     basées sur des données réelles chargées par l'utilisateur.
     """
+    # Vérifier si nous revenons du traitement des valeurs manquantes
+    if st.session_state.get('data') is not None and hasattr(st.session_state, 'data'):
+        real_data = st.session_state.data.copy()
+    else:
+        real_data = None
+
     st.header("Génération de Données Synthétiques")
     st.write("""
     Dans cette section, vous pouvez charger un jeu de données réelles et générer
@@ -1010,102 +1016,145 @@ def render_synthetic_data_tab():
     originales, sans correspondre à des individus réels.
     """)
     
-    uploaded_file = st.file_uploader("Charger un fichier CSV contenant des données réelles", type="csv")
+    uploaded_file = st.file_uploader("Charger un fichier CSV contenant des données réelles", type="csv", key="synth_data_uploader_demo_app")
     
+    # Utiliser st.session_state.data comme source principale de données pour cet onglet
     if uploaded_file is not None:
-        real_data = pd.read_csv(uploaded_file)
-        
-        # Vérifier les valeurs manquantes
+        # Si un nouveau fichier est chargé, il remplace st.session_state.data
+        # On vérifie si l'ID du fichier a changé pour éviter de relire inutilement
+        if st.session_state.get('last_uploaded_file_id_demo') != uploaded_file.file_id:
+            try:
+                real_data_from_file = pd.read_csv(uploaded_file)
+                st.session_state.data = real_data_from_file.copy()
+                real_data = st.session_state.data.copy()
+                st.session_state.last_uploaded_file_id_demo = uploaded_file.file_id
+            except Exception as e:
+                st.error(f"Erreur lors de la lecture du fichier CSV: {e}")
+                return # Arrêter si le fichier ne peut pas être lu
+    
+    if real_data is not None:
+        # Vérifier et afficher les informations sur les valeurs manquantes
         missing_values = real_data.isnull().sum().sum()
         if missing_values > 0:
             st.warning(f"⚠️ {missing_values} valeurs manquantes détectées dans le jeu de données.")
-            if st.button("Gérer les valeurs manquantes"):
-                real_data = show_missing_values_tab(real_data)
+            
+            # Afficher des statistiques sur les valeurs manquantes
+            missing_by_col = real_data.isnull().sum()
+            missing_cols = missing_by_col[missing_by_col > 0].index.tolist()
+            
+            if missing_cols:
+                # Créer un DataFrame pour afficher les colonnes avec valeurs manquantes
+                missing_df = pd.DataFrame({
+                    'Colonne': missing_cols,
+                    'Valeurs manquantes': [missing_by_col[col] for col in missing_cols],
+                    'Pourcentage': [f"{missing_by_col[col] / len(real_data) * 100:.2f}%" for col in missing_cols]
+                })
+                
+                with st.expander("Détails des valeurs manquantes"):
+                    st.write("Valeurs manquantes par colonne:")
+                    st.dataframe(missing_df)
+            
+            # Bouton pour afficher le module de traitement
+            show_treatment = st.checkbox("Traiter les valeurs manquantes", value=False, key="synth_mv_treatment")
+            
+            if show_treatment:
+                st.subheader("Traitement des valeurs manquantes")
+                # Appeler directement le module de traitement
+                processed_data = missing_values_module(real_data)
+                
+                # Si des données traitées sont retournées, les enregistrer
+                if processed_data is not None and not processed_data.equals(real_data):
+                    st.session_state.data = processed_data.copy()
+                    real_data = processed_data.copy()  # Mettre également à jour real_data
+                    st.success("Les valeurs manquantes ont été traitées avec succès!")
+                    
+                    # Option pour télécharger les données traitées
+                    csv = processed_data.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Télécharger les données traitées (CSV)",
+                        data=csv,
+                        file_name="donnees_sans_valeurs_manquantes.csv",
+                        mime="text/csv",
+                        key="synth_download_processed"
+                    )
+        else:
+            st.success("✅ Aucune valeur manquante détectée dans le jeu de données.")
         
-        st.subheader("Aperçu des Données Réelles")
+        st.subheader("Aperçu des Données Réelles Actuelles")
         st.write(real_data.head())
-        
-        # Mettre à jour les données dans la session state
-        st.session_state.data = real_data
         
         st.subheader("Sélectionner les Colonnes à Utiliser")
         all_columns = real_data.columns.tolist()
-        selected_columns = st.multiselect("Colonnes", all_columns, default=all_columns)
+        # Utiliser une clé unique pour le multiselect pour éviter les conflits
+        selected_columns = st.multiselect("Colonnes", all_columns, default=all_columns, key="selected_cols_synth_demo")
         
         if selected_columns:
-            real_data = real_data[selected_columns]
+            real_data_subset = real_data[selected_columns].copy() # Utiliser une copie pour les conversions
             
-            # Identifier les types de colonnes
-            numeric_cols = real_data.select_dtypes(include=['number']).columns
-            int_cols = [col for col in numeric_cols if real_data[col].apply(lambda x: float(x).is_integer()).all()]
+            numeric_cols = real_data_subset.select_dtypes(include=['number']).columns
+            int_cols = [col for col in numeric_cols if real_data_subset[col].dropna().apply(lambda x: float(x).is_integer()).all()]
             
-            # Convertir les colonnes entières
             for col in int_cols:
-                real_data[col] = pd.to_numeric(real_data[col], errors='coerce')
-                real_data[col] = real_data[col].fillna(real_data[col].median())
-                real_data[col] = real_data[col].astype(int)
+                real_data_subset[col] = pd.to_numeric(real_data_subset[col], errors='coerce')
+                real_data_subset[col] = real_data_subset[col].fillna(real_data_subset[col].median())
+                real_data_subset[col] = real_data_subset[col].astype(int)
             
-            # Convertir les colonnes catégorielles
-            cat_cols = real_data.select_dtypes(include=['object']).columns
+            cat_cols = real_data_subset.select_dtypes(include=['object']).columns
             for col in cat_cols:
-                real_data[col] = pd.Categorical(real_data[col])
+                real_data_subset[col] = pd.Categorical(real_data_subset[col])
             
             st.subheader("Paramètres de Génération")
-            
-            n_samples = st.slider("Nombre d'échantillons synthétiques", 
+            n_samples_synth = st.slider("Nombre d'échantillons synthétiques", 
                                   min_value=100, 
-                                  max_value=max(10000, len(real_data)*2), 
-                                  value=len(real_data),
-                                  step=100)
+                                  max_value=max(10000, len(real_data_subset)*2), 
+                                  value=len(real_data_subset),
+                                  step=100, key="n_samples_synth_demo")
             
             generation_method = st.selectbox(
                 "Méthode de génération",
-                ["Bootstrap Avancé", "Copule Gaussienne"]
+                ["Bootstrap Avancé", "Copule Gaussienne"],
+                key="gen_method_synth_demo"
             )
             
-            if st.button("Générer les Données Synthétiques"):
+            if st.button("Générer les Données Synthétiques", key="gen_synth_btn_demo"):
                 with st.spinner("Génération des données synthétiques en cours..."):
                     try:
                         if generation_method == "Bootstrap Avancé":
-                            synthetic_data = generate_synthetic_data_bootstrap(real_data, n_samples)
+                            synthetic_data = generate_synthetic_data_bootstrap(real_data_subset, n_samples_synth)
                         else:
-                            synthetic_data = generate_synthetic_data_gaussian_copula(real_data, n_samples)
+                            synthetic_data = generate_synthetic_data_gaussian_copula(real_data_subset, n_samples_synth)
                     
-                        st.session_state.real_data = real_data
-                        st.session_state.synthetic_data = synthetic_data
-                        
-                        comparison_results = compare_distributions(real_data, synthetic_data)
+                        st.session_state.generated_synthetic_data_demo = synthetic_data.copy()
+                        comparison_results = compare_distributions(real_data_subset, synthetic_data)
                         
                         st.subheader("Comparaison des Données Réelles et Synthétiques")
-                        
                         st.markdown("#### Aperçu des Données Synthétiques")
                         st.write(synthetic_data.head())
                         
+                        # Statistiques Comparatives
                         st.markdown("#### Statistiques Comparatives")
-                        
-                        num_cols = real_data.select_dtypes(include=['float64', 'int64']).columns
-                        if len(num_cols) > 0:
+                        num_cols_display = real_data_subset.select_dtypes(include=['float64', 'int64']).columns
+                        if len(num_cols_display) > 0:
                             numeric_comparison = pd.DataFrame()
-                            
-                            for col in num_cols:
-                                new_row = {
-                                    'Variable': col,
-                                    'Moyenne (Réel)': f"{comparison_results[col]['real_mean']:.2f}",
-                                    'Moyenne (Synth.)': f"{comparison_results[col]['synthetic_mean']:.2f}",
-                                    'Écart-type (Réel)': f"{comparison_results[col]['real_std']:.2f}",
-                                    'Écart-type (Synth.)': f"{comparison_results[col]['synthetic_std']:.2f}",
-                                    'KS p-value': f"{comparison_results[col]['ks_pvalue']:.4f}"
-                                }
-                                numeric_comparison = pd.concat([numeric_comparison, pd.DataFrame([new_row])], ignore_index=True)
-                            
+                            for col in num_cols_display:
+                                if col in comparison_results:
+                                    new_row = {
+                                        'Variable': col,
+                                        'Moyenne (Réel)': f"{comparison_results[col]['real_mean']:.2f}",
+                                        'Moyenne (Synth.)': f"{comparison_results[col]['synthetic_mean']:.2f}",
+                                        'Écart-type (Réel)': f"{comparison_results[col]['real_std']:.2f}",
+                                        'Écart-type (Synth.)': f"{comparison_results[col]['synthetic_std']:.2f}",
+                                        'KS p-value': f"{comparison_results[col]['ks_pvalue']:.4f}"
+                                    }
+                                    numeric_comparison = pd.concat([numeric_comparison, pd.DataFrame([new_row])], ignore_index=True)
                             st.write(numeric_comparison)
                         
-                        cat_cols = real_data.select_dtypes(include=['object', 'category']).columns
-                        if len(cat_cols) > 0:
+                        cat_cols_display = real_data_subset.select_dtypes(include=['object', 'category']).columns
+                        if len(cat_cols_display) > 0:
                             st.markdown("#### Distance de Variation Totale (Variables Catégorielles)")
-                            
-                            for col in cat_cols:
-                                st.write(f"{col}: {comparison_results[col]['tv_distance']:.4f}")
+                            for col in cat_cols_display:
+                                if col in comparison_results:
+                                    st.write(f"{col}: {comparison_results[col]['tv_distance']:.4f}")
                         
                         if 'correlation' in comparison_results:
                             st.markdown("#### Différence des Corrélations")
@@ -1113,58 +1162,227 @@ def render_synthetic_data_tab():
                             st.write(f"Différence maximale: {comparison_results['correlation']['max_diff']:.4f}")
                         
                         st.subheader("Visualisations Comparatives")
-                        
-                        if len(num_cols) > 0:
+                        if len(num_cols_display) > 0:
                             st.markdown("#### Distributions des Variables Numériques")
-                            for col in num_cols:
-                                fig = plot_numeric_comparison(real_data, synthetic_data, col)
+                            for col in num_cols_display:
+                                fig = plot_numeric_comparison(real_data_subset, synthetic_data, col)
                                 st.pyplot(fig)
                         
-                        if len(cat_cols) > 0:
+                        if len(cat_cols_display) > 0:
                             st.markdown("#### Distributions des Variables Catégorielles")
-                            for col in cat_cols:
-                                fig = plot_categorical_comparison(real_data, synthetic_data, col)
+                            for col in cat_cols_display:
+                                fig = plot_categorical_comparison(real_data_subset, synthetic_data, col)
                                 st.pyplot(fig)
                         
-                        if len(num_cols) >= 2:
+                        if len(num_cols_display) >= 2:
                             st.markdown("#### Comparaison des Matrices de Corrélation")
-                            fig = plot_correlation_comparison(real_data, synthetic_data)
-                            st.pyplot(fig)
+                            fig = plot_correlation_comparison(real_data_subset, synthetic_data)
+                            if fig: st.pyplot(fig)
                         
-                        if len(num_cols) >= 2:
+                        if len(num_cols_display) >= 2:
                             st.markdown("#### Analyse en Composantes Principales")
-                            fig = plot_pca_comparison(real_data, synthetic_data)
-                            st.pyplot(fig)
+                            fig = plot_pca_comparison(real_data_subset, synthetic_data)
+                            if fig: st.pyplot(fig)
                         
                         st.subheader("Télécharger les Données Synthétiques")
-                        csv = synthetic_data.to_csv(index=False)
-                        b64 = base64.b64encode(csv.encode()).decode()
-                        href = f'<a href="data:file/csv;base64,{b64}" download="donnees_synthetiques.csv">Télécharger les données synthétiques (CSV)</a>'
-                        st.markdown(href, unsafe_allow_html=True)
+                        csv_synth = synthetic_data.to_csv(index=False)
+                        b64_synth = base64.b64encode(csv_synth.encode()).decode()
+                        href_synth = f'<a href="data:file/csv;base64,{b64_synth}" download="donnees_synthetiques_demo.csv">Télécharger les données synthétiques (CSV)</a>'
+                        st.markdown(href_synth, unsafe_allow_html=True)
                     
                     except Exception as e:
                         st.error(f"Erreur lors de la génération des données: {str(e)}")
+                        st.exception(e) # Affiche la trace complète de l'erreur pour le débogage
         else:
             st.warning("Veuillez sélectionner au moins une colonne.")
     else:
         st.info("""
-        Vous n'avez pas encore chargé de données réelles. 
-        
-        Vous pouvez télécharger l'exemple de données ci-dessous pour tester l'application :
+        Vous n'avez pas encore chargé de données réelles pour la génération synthétique. 
+        Chargez un fichier CSV ci-dessus ou utilisez les données de l'onglet 'Données Artificielles'.
+        Vous pouvez aussi télécharger l'exemple de données ci-dessous pour tester :
         """)
-        
-        # Génération d'un exemple simple de données
         example_data = pd.DataFrame({
             'Age': np.random.normal(35, 10, 200).round().astype(int),
             'Sexe': np.random.choice(['H', 'F'], size=200, p=[0.5, 0.5]),
             'Revenu': np.random.normal(45000, 15000, 200).round(-2),
             'Satisfaction': np.random.choice(['Faible', 'Moyenne', 'Élevée'], size=200, p=[0.2, 0.5, 0.3])
         })
+        csv_example = example_data.to_csv(index=False)
+        b64_example = base64.b64encode(csv_example.encode()).decode()
+        href_example = f'<a href="data:file/csv;base64,{b64_example}" download="exemple_donnees_demo.csv">Télécharger un exemple de données (CSV)</a>'
+        st.markdown(href_example, unsafe_allow_html=True)
+
+def render_about_page():
+    """
+    Affiche une page d'information sur le projet, expliquant ses concepts et fonctionnalités.
+    """
+    st.header("À propos du projet")
+    
+    st.markdown("""
+    ## Générateur de Données Artificielles et Synthétiques
+    
+    Ce projet est un outil complet pour générer et traiter des données artificielles et synthétiques.
+    Il a été conçu pour répondre aux besoins des chercheurs, data scientists et développeurs
+    qui ont besoin de données de test ou d'entraînement tout en préservant la confidentialité.
+    """)
+    
+    # Présentation des concepts
+    with st.expander("🔍 Comprendre les concepts", expanded=True):
+        col1, col2 = st.columns(2)
         
-        csv = example_data.to_csv(index=False)
-        b64 = base64.b64encode(csv.encode()).decode()
-        href = f'<a href="data:file/csv;base64,{b64}" download="exemple_donnees.csv">Télécharger un exemple de données (CSV)</a>'
-        st.markdown(href, unsafe_allow_html=True)
+        with col1:
+            st.markdown("""
+            ### Données Artificielles
+            
+            Les **données artificielles** sont créées de toutes pièces sans se baser sur des données réelles existantes.
+            Elles sont générées selon des paramètres et distributions statistiques définis par l'utilisateur.
+            
+            **Avantages:**
+            - Contrôle total sur les caractéristiques des données
+            - Aucun problème de confidentialité
+            - Possibilité de créer des scénarios spécifiques
+            
+            **Utilisations:**
+            - Tests de logiciels
+            - Prototypage rapide
+            - Simulation de cas extrêmes
+            """)
+        
+        with col2:
+            st.markdown("""
+            ### Données Synthétiques
+            
+            Les **données synthétiques** sont créées à partir de données réelles existantes.
+            Elles préservent les propriétés statistiques des données d'origine sans contenir les mêmes individus.
+            
+            **Avantages:**
+            - Représentatives des données réelles
+            - Préservation de la confidentialité
+            - Conservation des relations complexes entre variables
+            
+            **Utilisations:**
+            - Formation et benchmarking d'algorithmes
+            - Partage de données sensibles
+            - Augmentation des jeux de données
+            """)
+    
+    # Présentation des fonctionnalités
+    st.subheader("Fonctionnalités principales")
+    
+    with st.expander("🧮 Génération de données artificielles", expanded=True):
+        st.markdown("""
+        ### Module de données artificielles
+        
+        Ce module vous permet de créer des données artificielles en définissant vos propres variables
+        et leurs caractéristiques statistiques.
+        
+        **Caractéristiques:**
+        - Définition de variables numériques avec différentes distributions (normale, uniforme, exponentielle, etc.)
+        - Création de variables catégorielles avec contrôle des fréquences
+        - Configuration des corrélations entre variables
+        - Contrôle du nombre d'échantillons générés
+        - Visualisation des distributions
+        - Exportation des données générées
+        
+        **Comment l'utiliser:**
+        1. Accédez à l'onglet "Données Artificielles"
+        2. Ajoutez des variables et configurez leurs paramètres
+        3. Définissez les corrélations si nécessaire
+        4. Générez les données et analysez les résultats
+        5. Téléchargez les données au format CSV
+        """)
+    
+    with st.expander("🔄 Génération de données synthétiques", expanded=True):
+        st.markdown("""
+        ### Module de données synthétiques
+        
+        Ce module vous permet de créer des données synthétiques à partir de données réelles existantes,
+        en préservant leurs caractéristiques statistiques.
+        
+        **Caractéristiques:**
+        - Chargement de données réelles via fichier CSV
+        - Choix entre différentes méthodes de génération (Bootstrap, Copule gaussienne)
+        - Contrôle du nombre d'échantillons à générer
+        - Comparaison entre données réelles et synthétiques
+        - Visualisation des distributions et corrélations
+        - Analyse statistique des résultats
+        - Exportation des données générées
+        
+        **Comment l'utiliser:**
+        1. Accédez à l'onglet "Données Synthétiques"
+        2. Chargez un fichier CSV contenant vos données réelles
+        3. Sélectionnez les colonnes à utiliser
+        4. Choisissez la méthode de génération et le nombre d'échantillons
+        5. Générez les données et analysez les résultats
+        6. Téléchargez les données synthétiques
+        """)
+    
+    with st.expander("🧹 Gestion des valeurs manquantes", expanded=True):
+        st.markdown("""
+        ### Module de traitement des valeurs manquantes
+        
+        Ce module vous permet d'analyser et de traiter les valeurs manquantes dans vos jeux de données
+        à l'aide de diverses techniques d'imputation.
+        
+        **Caractéristiques:**
+        - Analyse détaillée des valeurs manquantes dans le jeu de données
+        - Visualisation de la distribution des valeurs manquantes
+        - Plusieurs méthodes de traitement disponibles:
+          - Suppression (lignes ou colonnes)
+          - Imputation simple (moyenne, médiane, mode, constante)
+          - Imputation avancée (KNN, MICE)
+        - Comparaison avant/après traitement
+        - Visualisation des distributions après imputation
+        - Exportation des données traitées
+        
+        **Comment l'utiliser:**
+        1. Accédez à l'onglet "Gestion des Valeurs Manquantes" ou utilisez les options dans les autres onglets
+        2. Analysez la distribution des valeurs manquantes
+        3. Sélectionnez une méthode de traitement adaptée
+        4. Appliquez la méthode et vérifiez les résultats
+        5. Téléchargez les données traitées
+        """)
+    
+    # Informations techniques
+    st.subheader("Informations techniques")
+    
+    with st.expander("🔧 Technologies utilisées"):
+        st.markdown("""
+        - **Frontend & Backend**: Streamlit
+        - **Traitement des données**: Pandas, NumPy
+        - **Visualisation**: Matplotlib, Seaborn
+        - **Techniques statistiques**: SciPy, Scikit-learn
+        - **Méthodes avancées**: Imputation KNN, MICE
+        
+        Ce projet est open-source et peut être étendu avec de nouvelles fonctionnalités.
+        """)
+    
+    with st.expander("📊 Exemples d'utilisation"):
+        st.markdown("""
+        ### Cas d'usage courants
+        
+        **1. Développement et test de modèles d'apprentissage automatique**
+        - Générer des données synthétiques pour augmenter un jeu de données limité
+        - Créer des scénarios de test spécifiques avec des données artificielles
+        
+        **2. Partage de données dans un contexte sensible**
+        - Créer des versions synthétiques de données médicales ou financières
+        - Permettre l'exploration de données sans exposer d'informations personnelles
+        
+        **3. Enseignement et formation**
+        - Générer des jeux de données pour des exercices de data science
+        - Illustrer des concepts statistiques avec des données contrôlées
+        """)
+    
+    # Crédits et contact
+    st.markdown("""
+    ---
+    ### Crédits
+    
+    Ce projet a été développé dans le cadre de la recherche sur les techniques de génération de données.
+    
+    Pour toute question ou suggestion, n'hésitez pas à me contacter solim.laokpezi@outlook.com.
+    """)
 
 def main():
     """
@@ -1176,17 +1394,17 @@ def main():
         layout="wide"
     )
     
+    # Initialisation de la session state pour stocker les données globales de l'application
+    if 'data' not in st.session_state:
+        st.session_state.data = None # Données principales utilisées par les onglets
+    
     st.title("Générateur de Données Artificielles et Synthétiques")
     
-    # Initialisation de la session state pour stocker les données
-    if 'data' not in st.session_state:
-        st.session_state.data = None
-    
-    # Création des onglets
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "Données Artificielles", 
         "Données Synthétiques",
-        "Gestion des Valeurs Manquantes"
+        "Gestion des Valeurs Manquantes",
+        "À propos du projet"
     ])
     
     with tab1:
@@ -1196,10 +1414,91 @@ def main():
         render_synthetic_data_tab()
         
     with tab3:
+        st.header("Gestion des Valeurs Manquantes")
+        st.write("""
+        Ce module vous permet de traiter les valeurs manquantes dans vos jeux de données
+        en utilisant différentes techniques d'imputation et de visualisation.
+        """)
+        
+        # Vérifier si des données sont disponibles
         if st.session_state.data is not None:
-            st.session_state.data = show_missing_values_tab(st.session_state.data)
+            data = st.session_state.data.copy()
+            
+            # Analyser les valeurs manquantes dans le jeu de données actuel
+            missing_values = data.isnull().sum().sum()
+            if missing_values > 0:
+                st.warning(f"⚠️ {missing_values} valeurs manquantes détectées dans le jeu de données.")
+                
+                # Afficher des statistiques sur les valeurs manquantes
+                missing_by_col = data.isnull().sum()
+                missing_cols = missing_by_col[missing_by_col > 0].index.tolist()
+                
+                # Créer un DataFrame pour afficher les colonnes avec valeurs manquantes
+                if missing_cols:
+                    missing_df = pd.DataFrame({
+                        'Colonne': missing_cols,
+                        'Valeurs manquantes': [missing_by_col[col] for col in missing_cols],
+                        'Pourcentage': [f"{missing_by_col[col] / len(data) * 100:.2f}%" for col in missing_cols]
+                    })
+                    
+                    st.write("Valeurs manquantes par colonne:")
+                    st.dataframe(missing_df)
+                
+                # Bouton pour afficher le module de traitement
+                show_treatment = st.checkbox("Traiter les valeurs manquantes", value=False)
+                
+                if show_treatment:
+                    st.subheader("Traitement des valeurs manquantes")
+                    # Appeler directement le module de traitement
+                    processed_data = missing_values_module(data)
+                    
+                    # Si des données traitées sont retournées, les enregistrer
+                    if processed_data is not None and not processed_data.equals(data):
+                        st.session_state.data = processed_data.copy()
+                        st.success("Les valeurs manquantes ont été traitées avec succès!")
+                        
+                        # Option pour télécharger les données traitées
+                        csv = processed_data.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Télécharger les données traitées (CSV)",
+                            data=csv,
+                            file_name="donnees_sans_valeurs_manquantes.csv",
+                            mime="text/csv"
+                        )
+            else:
+                st.success("✅ Aucune valeur manquante détectée dans le jeu de données.")
+            
+            # Afficher un aperçu des données actuelles
+            st.subheader("Aperçu des données actuelles")
+            st.dataframe(data.head())
+            
+            # Option pour télécharger les données
+            st.download_button(
+                label="Télécharger les données (CSV)",
+                data=data.to_csv(index=False).encode('utf-8'),
+                file_name="donnees.csv",
+                mime="text/csv"
+            )
         else:
-            st.warning("Veuillez d'abord charger ou générer un jeu de données dans les autres onglets.")
+            st.info("""
+            Aucune donnée n'est actuellement chargée. Veuillez:
+            - Charger des données dans l'onglet 'Données Synthétiques'
+            - Ou générer des données dans l'onglet 'Données Artificielles'
+            """)
+            
+            # Proposer de charger un fichier directement
+            uploaded_file = st.file_uploader("Charger un fichier CSV", type="csv", key="mv_tab_uploader")
+            if uploaded_file is not None:
+                try:
+                    data = pd.read_csv(uploaded_file)
+                    st.session_state.data = data.copy()
+                    st.success("Fichier chargé avec succès!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors du chargement du fichier: {str(e)}")
+    
+    with tab4:
+        render_about_page()
 
 if __name__ == "__main__":
     main()
