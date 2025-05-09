@@ -11,10 +11,7 @@ import base64
 from PIL import Image
 import sys
 import os
-import torch
-if hasattr(torch, "classes"):
-    del torch.classes
-    
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Configuration de la page - DOIT ÊTRE LA PREMIÈRE COMMANDE STREAMLIT
