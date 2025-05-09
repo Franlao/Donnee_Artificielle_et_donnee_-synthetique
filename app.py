@@ -11,8 +11,8 @@ import base64
 from PIL import Image
 import sys
 import os
-#import subprocess
-#subprocess.run(["pip", "install", "torch==2.0.0", "torchvision==0.15.0"])
+import subprocess
+subprocess.run(["pip", "install", "torch==2.0.0"])
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
