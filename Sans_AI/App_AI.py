@@ -649,7 +649,7 @@ with tab2:
     
     if uploaded_file is not None:
         # Charger les données
-        real_data = pd.read_csv(uploaded_file)
+        real_data = pd.read_csv(uploaded_file, dtype=str)
         
         # Afficher un aperçu des données réelles
         st.subheader("Aperçu des Données Réelles")

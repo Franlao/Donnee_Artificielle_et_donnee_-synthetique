@@ -11,6 +11,7 @@ import base64
 import json
 from typing import Dict, List, Union, Tuple, Any, Optional
 import uuid
+from .missing_methods_tab import show_missing_values_tab
 
 # Fonctions pour générer des données artificielles
 def generate_artificial_data(params: Dict[str, Any], n_samples: int = 1000) -> pd.DataFrame:
@@ -1012,10 +1013,20 @@ def render_synthetic_data_tab():
     uploaded_file = st.file_uploader("Charger un fichier CSV contenant des données réelles", type="csv")
     
     if uploaded_file is not None:
-        real_data = pd.read_csv(uploaded_file)
+        real_data = pd.read_csv(uploaded_file, dtype=str)
+        
+        # Vérifier les valeurs manquantes
+        missing_values = real_data.isnull().sum().sum()
+        if missing_values > 0:
+            st.warning(f"⚠️ {missing_values} valeurs manquantes détectées dans le jeu de données.")
+            if st.button("Gérer les valeurs manquantes"):
+                real_data = show_missing_values_tab(real_data)
         
         st.subheader("Aperçu des Données Réelles")
         st.write(real_data.head())
+        
+        # Mettre à jour les données dans la session state
+        st.session_state.data = real_data
         
         st.subheader("Sélectionner les Colonnes à Utiliser")
         all_columns = real_data.columns.tolist()
@@ -1160,65 +1171,35 @@ def main():
     Fonction principale qui configure l'application Streamlit.
     """
     st.set_page_config(
-        page_title="Générateur de Données - Outil Générique",
+        page_title="Générateur de Données Artificielles et Synthétiques",
         page_icon="📊",
-        layout="wide",
-        initial_sidebar_state="expanded"
+        layout="wide"
     )
     
-    st.title("Générateur de Données - Outil Générique")
+    st.title("Générateur de Données Artificielles et Synthétiques")
     
-    tab1, tab2 = st.tabs(["Données Artificielles", "Données Synthétiques"])
+    # Initialisation de la session state pour stocker les données
+    if 'data' not in st.session_state:
+        st.session_state.data = None
+    
+    # Création des onglets
+    tab1, tab2, tab3 = st.tabs([
+        "Données Artificielles", 
+        "Données Synthétiques",
+        "Gestion des Valeurs Manquantes"
+    ])
     
     with tab1:
         render_dynamic_artificial_data_tab()
     
     with tab2:
         render_synthetic_data_tab()
-    
-    with st.sidebar:
-        st.title("Guide d'utilisation")
         
-        st.markdown("""
-        ### Données Artificielles
-        
-        Utilisez cet onglet pour générer des données à partir de distributions statistiques que vous définissez.
-        
-        1. Ajoutez vos variables avec le formulaire
-        2. Configurez chaque variable (type, distribution, paramètres)
-        3. Définissez les corrélations entre variables numériques
-        4. Cliquez sur "Générer les Données"
-        5. Explorez les visualisations et téléchargez les données
-        
-        ### Types de Variables
-        
-        **Numériques**:
-        - *Normal* : Distribution normale (gaussienne)
-        - *Uniform* : Distribution uniforme
-        - *Exponential* : Distribution exponentielle
-        - *Beta* : Distribution bêta
-        - *Gamma* : Distribution gamma
-        - *Poisson* : Distribution de Poisson
-        
-        **Catégorielles**:
-        - Spécifiez les catégories et leurs probabilités
-        
-        ### Données Synthétiques
-        
-        Utilisez cet onglet pour générer des données synthétiques basées sur des données réelles.
-        
-        1. Chargez un fichier CSV contenant vos données réelles
-        2. Sélectionnez les colonnes à inclure
-        3. Choisissez la méthode de génération
-        4. Cliquez sur "Générer les Données Synthétiques"
-        5. Comparez les distributions et téléchargez les données
-        
-        ### Méthodes de génération
-        
-        **Bootstrap Avancé**: Rééchantillonnage avec perturbation
-        
-        **Copule Gaussienne**: Modélise les dépendances entre variables via une distribution normale multivariée
-        """)
+    with tab3:
+        if st.session_state.data is not None:
+            st.session_state.data = show_missing_values_tab(st.session_state.data)
+        else:
+            st.warning("Veuillez d'abord charger ou générer un jeu de données dans les autres onglets.")
 
 if __name__ == "__main__":
     main()

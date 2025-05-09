@@ -11,6 +11,10 @@ import base64
 from PIL import Image
 import sys
 import os
+import torch
+if hasattr(torch, "classes"):
+    del torch.classes
+    
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Configuration de la page - DOIT ÊTRE LA PREMIÈRE COMMANDE STREAMLIT
@@ -21,8 +25,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# IMPORTANT: Initialize session state variables at the beginning
+if 'variables' not in st.session_state:
+    st.session_state.variables = {}
+    
+if 'correlations' not in st.session_state:
+    st.session_state.correlations = {}
+    
+if 'artificial_data' not in st.session_state:
+    st.session_state.artificial_data = None
+    
+if 'real_data' not in st.session_state:
+    st.session_state.real_data = None
+    
+if 'synthetic_data' not in st.session_state:
+    st.session_state.synthetic_data = None
+
 # Titre principal
 st.title("Démonstration - Données Synthétiques et Artificielles en Santé")
+
+# Création du package AI_Methods
+# Assurez-vous que le répertoire existe
+os.makedirs("AI_Methods", exist_ok=True)
 
 # Importer les fonctions depuis demo_app.py
 from Avec_AI.demo_app import (
@@ -38,8 +62,8 @@ from Avec_AI.demo_app import (
     render_synthetic_data_tab
 )
 
-# Importer les fonctions depuis ai_methods_extension.py
-from Avec_AI.ai_methods_tab import  render_ai_methods_tab
+# Importer la fonction render_ai_methods_tab depuis le package AI_Methods
+from Avec_AI.AI_Method import render_ai_methods_tab
 
 # Créer les onglets
 tab1, tab2, tab3 = st.tabs(["Données Artificielles", "Données Synthétiques", "Méthodes d'IA"])
@@ -121,7 +145,7 @@ with st.sidebar:
         Pour exécuter cette application, assurez-vous d'avoir les fichiers suivants:
         - `app.py` (ce fichier principal)
         - `demo_app.py` (fonctionnalités de base)
-        - `ai_methods_extension.py` (fonctionnalités d'IA)
+        - Package `AI_Methods` (fonctionnalités d'IA)
 
         ### Lancement
 
