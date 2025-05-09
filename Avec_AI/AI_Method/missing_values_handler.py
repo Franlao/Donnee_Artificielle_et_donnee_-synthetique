@@ -91,7 +91,7 @@ class MissingValuesHandler:
             df_missing = pd.DataFrame(list(missing_data.items()), columns=['Column', 'Missing Percentage'])
             df_missing = df_missing.sort_values('Missing Percentage', ascending=False)
             
-            sns.barplot(x='Missing Percentage', y='Column', data=df_missing, hue='Column', palette='viridis', ax=ax, legend=False)
+            sns.barplot(x='Missing Percentage', y='Column', data=df_missing, palette='viridis', ax=ax)
             ax.set_title('Pourcentage de valeurs manquantes par colonne')
             ax.set_xlim(0, 100)
             ax.grid(axis='x')
@@ -219,12 +219,22 @@ class MissingValuesHandler:
         Args:
             method_key: Clé de la méthode à appliquer
             **kwargs: Paramètres supplémentaires pour la méthode
+                progress_callback: Fonction de callback pour mettre à jour la progression (0.0 à 1.0)
             
         Returns:
             DataFrame avec les valeurs manquantes traitées
         """
+        # Récupérer le callback de progression, si fourni
+        progress_callback = kwargs.pop('progress_callback', None)
+        
+        # Si un callback est fourni, signaler le début du traitement
+        if progress_callback:
+            progress_callback(0.1)  # 10% - Initialisation
+        
         # Vérifier s'il y a des valeurs manquantes
         if self.missing_info['total_missing'] == 0:
+            if progress_callback:
+                progress_callback(1.0)  # 100% - Terminé
             st.success("Aucune valeur manquante à traiter!")
             return self.data
         
@@ -320,32 +330,71 @@ class MissingValuesHandler:
             numeric_cols = imputed_data.select_dtypes(include=['number']).columns
             categorical_cols = imputed_data.select_dtypes(exclude=['number']).columns
             
+            # Si un callback est fourni, signaler l'étape de traitement des catégorielles
+            if progress_callback:
+                progress_callback(0.2)  # 20% - Début traitement catégorielles
+            
             # Pour KNN, nous devons d'abord encoder les variables catégorielles
             if len(categorical_cols) > 0:
+                # Convertir toutes les colonnes catégorielles en chaînes de caractères pour assurer des types cohérents
+                for col in categorical_cols:
+                    imputed_data[col] = imputed_data[col].astype(str)
+                
                 # Imputer d'abord les valeurs manquantes dans les variables catégorielles avec le mode
                 cat_imputer = SimpleImputer(strategy='most_frequent')
                 imputed_data[categorical_cols] = cat_imputer.fit_transform(imputed_data[categorical_cols])
                 
-                # Encoder les variables catégorielles (one-hot encoding)
+                # Créer une copie de travail pour l'encodage one-hot, gardant les colonnes originales intactes
+                working_data = imputed_data.copy()
+                
+                # Limiter le nombre de catégories pour le one-hot encoding pour améliorer les performances
+                max_categories = 10  # Limiter à 10 catégories par colonne
+                one_hot_cols = []
+                
                 for col in categorical_cols:
-                    dummies = pd.get_dummies(imputed_data[col], prefix=col, dummy_na=False)
-                    imputed_data = pd.concat([imputed_data.drop(col, axis=1), dummies], axis=1)
-            
-            # Maintenant, appliquer KNN sur l'ensemble du DataFrame
-            if len(imputed_data.select_dtypes(include=['number']).columns) > 0:
-                numeric_data = imputed_data.select_dtypes(include=['number'])
+                    # Si la colonne a trop de catégories, la conserver telle quelle
+                    n_categories = imputed_data[col].nunique()
+                    if n_categories <= max_categories:
+                        one_hot_cols.append(col)
+                
+                # Encoder uniquement les colonnes avec un nombre raisonnable de catégories
+                encoded_cols = []
+                for col in one_hot_cols:
+                    dummies = pd.get_dummies(working_data[col], prefix=col, dummy_na=False)
+                    working_data = pd.concat([working_data.drop(col, axis=1), dummies], axis=1)
+                    encoded_cols.extend(dummies.columns.tolist())
+                
+                # Garder seulement les colonnes numériques d'origine et les nouvelles colonnes encodées
+                numeric_cols = imputed_data.select_dtypes(include=['number']).columns
+                working_data = working_data[list(numeric_cols) + encoded_cols]
                 
                 # Normaliser les données pour KNN
                 scaler = StandardScaler()
-                scaled_data = scaler.fit_transform(numeric_data)
+                scaled_data = scaler.fit_transform(working_data)
+                
+                # Si un callback est fourni, signaler l'étape d'imputation KNN
+                if progress_callback:
+                    progress_callback(0.6)  # 60% - Début KNN
                 
                 # Appliquer KNN
                 knn_imputer = KNNImputer(n_neighbors=n_neighbors)
                 imputed_numeric = knn_imputer.fit_transform(scaled_data)
                 
+                # Si un callback est fourni, signaler l'étape de dénormalisation
+                if progress_callback:
+                    progress_callback(0.8)  # 80% - Début dénormalisation
+                
                 # Dénormaliser et remettre dans le DataFrame
                 imputed_numeric = scaler.inverse_transform(imputed_numeric)
-                imputed_data[numeric_data.columns] = imputed_numeric
+                working_data = pd.DataFrame(imputed_numeric, columns=working_data.columns, index=working_data.index)
+                
+                # Mettre à jour uniquement les colonnes numériques dans le DataFrame original
+                for col in numeric_cols:
+                    imputed_data[col] = working_data[col]
+            
+            # Si un callback est fourni, signaler la fin du traitement
+            if progress_callback:
+                progress_callback(0.9)  # 90% - Presque terminé
             
         elif method_key == 'iterative_imputation':
             # Obtenir le nombre maximum d'itérations
@@ -355,16 +404,47 @@ class MissingValuesHandler:
             numeric_cols = imputed_data.select_dtypes(include=['number']).columns
             categorical_cols = imputed_data.select_dtypes(exclude=['number']).columns
             
+            # Si un callback est fourni, signaler l'étape de traitement des catégorielles
+            if progress_callback:
+                progress_callback(0.2)  # 20% - Début traitement catégorielles
+            
             # Pour l'imputation itérative, nous devons d'abord encoder les variables catégorielles
             if len(categorical_cols) > 0:
+                # Convertir toutes les colonnes catégorielles en chaînes de caractères pour assurer des types cohérents
+                for col in categorical_cols:
+                    imputed_data[col] = imputed_data[col].astype(str)
+                
                 # Imputer d'abord les valeurs manquantes dans les variables catégorielles avec le mode
                 cat_imputer = SimpleImputer(strategy='most_frequent')
                 imputed_data[categorical_cols] = cat_imputer.fit_transform(imputed_data[categorical_cols])
                 
-                # Encoder les variables catégorielles (one-hot encoding)
+                # Créer une copie de travail pour l'encodage one-hot, gardant les colonnes originales intactes
+                working_data = imputed_data.copy()
+                
+                # Limiter le nombre de catégories pour le one-hot encoding pour améliorer les performances
+                max_categories = 10  # Limiter à 10 catégories par colonne
+                one_hot_cols = []
+                
                 for col in categorical_cols:
-                    dummies = pd.get_dummies(imputed_data[col], prefix=col, dummy_na=False)
-                    imputed_data = pd.concat([imputed_data.drop(col, axis=1), dummies], axis=1)
+                    # Si la colonne a trop de catégories, la conserver telle quelle
+                    n_categories = imputed_data[col].nunique()
+                    if n_categories <= max_categories:
+                        one_hot_cols.append(col)
+                
+                # Encoder uniquement les colonnes avec un nombre raisonnable de catégories
+                encoded_cols = []
+                for col in one_hot_cols:
+                    dummies = pd.get_dummies(working_data[col], prefix=col, dummy_na=False)
+                    working_data = pd.concat([working_data.drop(col, axis=1), dummies], axis=1)
+                    encoded_cols.extend(dummies.columns.tolist())
+                
+                # Garder seulement les colonnes numériques d'origine et les nouvelles colonnes encodées
+                numeric_cols = imputed_data.select_dtypes(include=['number']).columns
+                working_data = working_data[list(numeric_cols) + encoded_cols]
+            
+            # Si un callback est fourni, signaler l'étape de normalisation
+            if progress_callback:
+                progress_callback(0.4)  # 40% - Début traitement numériques
             
             # Maintenant, appliquer l'imputation itérative sur l'ensemble du DataFrame
             if len(imputed_data.select_dtypes(include=['number']).columns) > 0:
@@ -372,15 +452,36 @@ class MissingValuesHandler:
                 
                 # Normaliser les données pour l'imputation itérative
                 scaler = StandardScaler()
-                scaled_data = scaler.fit_transform(numeric_data)
+                scaled_data = scaler.fit_transform(working_data)
                 
-                # Appliquer l'imputation itérative
-                mice_imputer = IterativeImputer(max_iter=max_iter, random_state=42)
+                # Si un callback est fourni, signaler l'étape d'imputation itérative
+                if progress_callback:
+                    progress_callback(0.6)  # 60% - Début MICE
+                
+                # Appliquer l'imputation itérative avec des paramètres optimisés pour la performance
+                mice_imputer = IterativeImputer(
+                    max_iter=max_iter,
+                    random_state=42,
+                    tol=0.01,  # Tolérance plus élevée pour converger plus rapidement
+                    imputation_order='ascending'  # Plus rapide que 'random'
+                )
                 imputed_numeric = mice_imputer.fit_transform(scaled_data)
+                
+                # Si un callback est fourni, signaler l'étape de dénormalisation
+                if progress_callback:
+                    progress_callback(0.8)  # 80% - Début dénormalisation
                 
                 # Dénormaliser et remettre dans le DataFrame
                 imputed_numeric = scaler.inverse_transform(imputed_numeric)
-                imputed_data[numeric_data.columns] = imputed_numeric
+                working_data = pd.DataFrame(imputed_numeric, columns=working_data.columns, index=working_data.index)
+                
+                # Mettre à jour uniquement les colonnes numériques dans le DataFrame original
+                for col in numeric_cols:
+                    imputed_data[col] = working_data[col]
+            
+            # Si un callback est fourni, signaler la fin du traitement
+            if progress_callback:
+                progress_callback(0.9)  # 90% - Presque terminé
         
         # Vérifier si toutes les valeurs manquantes ont été traitées
         remaining_missing = imputed_data.isna().sum().sum()
@@ -388,6 +489,10 @@ class MissingValuesHandler:
             st.warning(f"Il reste {remaining_missing} valeurs manquantes dans le jeu de données après imputation.")
         else:
             st.success("Toutes les valeurs manquantes ont été traitées avec succès!")
+        
+        # Si un callback est fourni, signaler la fin complète du traitement
+        if progress_callback:
+            progress_callback(1.0)  # 100% - Terminé
         
         return imputed_data
     

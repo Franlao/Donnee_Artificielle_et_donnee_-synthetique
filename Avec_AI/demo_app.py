@@ -1013,7 +1013,7 @@ def render_synthetic_data_tab():
     uploaded_file = st.file_uploader("Charger un fichier CSV contenant des données réelles", type="csv")
     
     if uploaded_file is not None:
-        real_data = pd.read_csv(uploaded_file, dtype=str)
+        real_data = pd.read_csv(uploaded_file)
         
         # Vérifier les valeurs manquantes
         missing_values = real_data.isnull().sum().sum()

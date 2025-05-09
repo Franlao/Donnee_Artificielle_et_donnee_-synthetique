@@ -93,8 +93,486 @@ def generate_with_statistical_methods(preprocessed_data, metadata, method_type, 
     else:
         raise ValueError(f"Méthode statistique non reconnue: {method_type}")
 
+# Nouvelle fonction pour afficher l'interface de gestion des valeurs manquantes
+def show_missing_values_interface():
+    """Affiche une interface dédiée à la gestion des valeurs manquantes"""
+    if not hasattr(st.session_state, 'original_data'):
+        st.error("Aucune donnée à traiter. Veuillez d'abord charger un fichier.")
+        return
+    
+    st.title("Gestion des Valeurs Manquantes")
+    
+    # Récupérer les données originales
+    data = st.session_state.original_data.copy()
+    
+    # Afficher un aperçu des données originales
+    st.subheader("Aperçu des Données")
+    st.dataframe(data.head())
+    
+    # Analyser les valeurs manquantes
+    missing_total = data.isnull().sum().sum()
+    missing_by_col = data.isnull().sum()
+    missing_cols = missing_by_col[missing_by_col > 0].index.tolist()
+    
+    # Afficher les statistiques des valeurs manquantes
+    st.subheader("Analyse des Valeurs Manquantes")
+    st.write(f"Nombre total de valeurs manquantes: **{missing_total}**")
+    
+    # Créer un dataframe pour afficher les colonnes avec valeurs manquantes
+    missing_df = pd.DataFrame({
+        'Colonne': missing_cols,
+        'Valeurs manquantes': [missing_by_col[col] for col in missing_cols],
+        'Pourcentage': [f"{missing_by_col[col] / len(data) * 100:.2f}%" for col in missing_cols]
+    })
+    
+    st.write("Valeurs manquantes par colonne:")
+    st.dataframe(missing_df)
+    
+    # Visualiser les valeurs manquantes
+    st.subheader("Visualisation des Valeurs Manquantes")
+    
+    # Heatmap
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.heatmap(data[missing_cols].isnull(), cmap='viridis', yticklabels=False, cbar=False, ax=ax)
+    ax.set_title('Heatmap des valeurs manquantes')
+    st.pyplot(fig)
+    
+    # Graphique à barres
+    fig, ax = plt.subplots(figsize=(10, 6))
+    missing_by_col[missing_cols].sort_values(ascending=False).plot(kind='bar', ax=ax)
+    ax.set_title('Nombre de valeurs manquantes par colonne')
+    ax.set_ylabel('Nombre de valeurs manquantes')
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # Sélection des méthodes de traitement
+    st.subheader("Traitement des Valeurs Manquantes")
+    
+    # Créer des onglets pour les différentes méthodes
+    treatment_tabs = st.tabs([
+        "Suppression", 
+        "Imputation Simple", 
+        "Imputation Avancée",
+        "Résultats"
+    ])
+    
+    # Variable pour stocker les données traitées
+    treated_data = None
+    
+    # Onglet 1: Suppression
+    with treatment_tabs[0]:
+        st.write("### Suppression des lignes ou colonnes avec valeurs manquantes")
+        
+        removal_method = st.radio(
+            "Méthode de suppression:",
+            ["Supprimer les lignes", "Supprimer les colonnes"]
+        )
+        
+        if removal_method == "Supprimer les lignes":
+            threshold = st.slider(
+                "Seuil de suppression (% maximum de valeurs manquantes par ligne)",
+                min_value=0,
+                max_value=100,
+                value=50,
+                step=5,
+                help="Les lignes avec un pourcentage de valeurs manquantes supérieur à ce seuil seront supprimées"
+            )
+            
+            if st.button("Appliquer la suppression de lignes"):
+                # Calcul du pourcentage de valeurs manquantes par ligne
+                missing_percentage = data.isnull().mean(axis=1) * 100
+                
+                # Filtrer les lignes avec moins de valeurs manquantes que le seuil
+                filtered_data = data[missing_percentage <= threshold]
+                
+                # Afficher les résultats
+                removed_rows = len(data) - len(filtered_data)
+                st.info(f"{removed_rows} lignes supprimées sur {len(data)} ({removed_rows/len(data)*100:.2f}%)")
+                
+                treated_data = filtered_data
+                st.session_state.processed_data = treated_data
+                
+                # Montrer un aperçu
+                st.write("Aperçu des données après suppression:")
+                st.dataframe(treated_data.head())
+                
+                # Mettre à jour les statistiques de valeurs manquantes
+                new_missing = treated_data.isnull().sum().sum()
+                st.write(f"Valeurs manquantes restantes: {new_missing} (sur {missing_total} initialement)")
+        
+        else:  # Supprimer les colonnes
+            col_threshold = st.slider(
+                "Seuil de suppression (% maximum de valeurs manquantes par colonne)",
+                min_value=0,
+                max_value=100,
+                value=50,
+                step=5,
+                help="Les colonnes avec un pourcentage de valeurs manquantes supérieur à ce seuil seront supprimées"
+            )
+            
+            if st.button("Appliquer la suppression de colonnes"):
+                # Calculer le pourcentage de valeurs manquantes par colonne
+                missing_percentage = data.isnull().mean() * 100
+                
+                # Sélectionner les colonnes à conserver
+                columns_to_keep = missing_percentage[missing_percentage <= col_threshold].index.tolist()
+                filtered_data = data[columns_to_keep]
+                
+                # Afficher les résultats
+                removed_cols = len(data.columns) - len(filtered_data.columns)
+                st.info(f"{removed_cols} colonnes supprimées sur {len(data.columns)} ({removed_cols/len(data.columns)*100:.2f}%)")
+                
+                treated_data = filtered_data
+                st.session_state.processed_data = treated_data
+                
+                # Montrer un aperçu
+                st.write("Aperçu des données après suppression:")
+                st.dataframe(treated_data.head())
+                
+                # Mettre à jour les statistiques de valeurs manquantes
+                new_missing = treated_data.isnull().sum().sum()
+                st.write(f"Valeurs manquantes restantes: {new_missing} (sur {missing_total} initialement)")
+    
+    # Onglet 2: Imputation Simple
+    with treatment_tabs[1]:
+        st.write("### Imputation simple des valeurs manquantes")
+        
+        # Séparer les colonnes numériques et catégorielles
+        numeric_cols = data.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = data.select_dtypes(exclude=['number']).columns.tolist()
+        
+        # Obtenir les colonnes avec valeurs manquantes
+        numeric_missing = [col for col in numeric_cols if col in missing_cols]
+        categorical_missing = [col for col in categorical_cols if col in missing_cols]
+        
+        # Méthodes d'imputation pour colonnes numériques
+        if numeric_missing:
+            st.write("#### Colonnes numériques avec valeurs manquantes:")
+            st.write(", ".join(numeric_missing))
+            
+            numeric_method = st.selectbox(
+                "Méthode d'imputation pour variables numériques:",
+                ["Moyenne", "Médiane", "Constante"]
+            )
+            
+            numeric_constant = None
+            if numeric_method == "Constante":
+                numeric_constant = st.number_input("Valeur constante pour l'imputation numérique:", value=0.0)
+        
+        # Méthodes d'imputation pour colonnes catégorielles
+        if categorical_missing:
+            st.write("#### Colonnes catégorielles avec valeurs manquantes:")
+            st.write(", ".join(categorical_missing))
+            
+            categorical_method = st.selectbox(
+                "Méthode d'imputation pour variables catégorielles:",
+                ["Mode (valeur la plus fréquente)", "Constante"]
+            )
+            
+            categorical_constant = None
+            if categorical_method == "Constante":
+                categorical_constant = st.text_input("Valeur constante pour l'imputation catégorielle:", value="Inconnu")
+        
+        if st.button("Appliquer l'imputation simple"):
+            imputed_data = data.copy()
+            
+            # Imputer les colonnes numériques
+            if numeric_missing:
+                for col in numeric_missing:
+                    if numeric_method == "Moyenne":
+                        imputed_data[col] = imputed_data[col].fillna(imputed_data[col].mean())
+                    elif numeric_method == "Médiane":
+                        imputed_data[col] = imputed_data[col].fillna(imputed_data[col].median())
+                    else:  # Constante
+                        imputed_data[col] = imputed_data[col].fillna(numeric_constant)
+            
+            # Imputer les colonnes catégorielles
+            if categorical_missing:
+                for col in categorical_missing:
+                    if categorical_method == "Mode (valeur la plus fréquente)":
+                        imputed_data[col] = imputed_data[col].fillna(imputed_data[col].mode()[0])
+                    else:  # Constante
+                        imputed_data[col] = imputed_data[col].fillna(categorical_constant)
+            
+            treated_data = imputed_data
+            st.session_state.processed_data = treated_data
+            
+            # Afficher les résultats
+            st.write("Aperçu des données après imputation:")
+            st.dataframe(treated_data.head())
+            
+            # Mettre à jour les statistiques de valeurs manquantes
+            new_missing = treated_data.isnull().sum().sum()
+            st.success(f"Valeurs manquantes comblées: {missing_total - new_missing} sur {missing_total}")
+            st.write(f"Valeurs manquantes restantes: {new_missing}")
+    
+    # Onglet 3: Imputation Avancée
+    with treatment_tabs[2]:
+        st.write("### Méthodes d'imputation avancées")
+        
+        advanced_method = st.selectbox(
+            "Méthode d'imputation avancée:",
+            ["KNN (k plus proches voisins)", "MICE (Imputation multiple par équations chaînées)"]
+        )
+        
+        # Ajout d'une option pour le mode rapide
+        fast_mode = st.checkbox(
+            "Mode rapide (recommandé pour grands jeux de données)", 
+            value=True,
+            help="Limite le nombre de colonnes et d'échantillons pour accélérer le traitement"
+        )
+        
+        max_cols = None
+        if fast_mode:
+            st.info("⚡ Le mode rapide est activé. L'imputation sera plus rapide mais potentiellement moins précise.")
+            # Permettre à l'utilisateur de définir une limite de colonnes à traiter
+            max_cols = st.slider(
+                "Nombre maximum de colonnes à traiter",
+                min_value=5,
+                max_value=30,
+                value=15,
+                help="Limiter le nombre de colonnes pour accélérer le traitement"
+            )
+        
+        if advanced_method == "KNN (k plus proches voisins)":
+            n_neighbors = st.slider(
+                "Nombre de voisins (k)",
+                min_value=1,
+                max_value=20,
+                value=5,
+                step=1,
+                help="Nombre de voisins à considérer pour l'imputation KNN"
+            )
+            
+            if st.button("Appliquer l'imputation KNN"):
+                # Utiliser le module missing_values_handler avec la méthode KNN
+                from .missing_values_handler import MissingValuesHandler
+                
+                # Message d'information sur le traitement
+                info_msg = st.info("Préparation des données pour l'imputation KNN... Veuillez patienter.")
+                
+                # Si mode rapide est activé, sélectionner un sous-ensemble de colonnes
+                if fast_mode and max_cols and len(data.columns) > max_cols:
+                    # Prioriser les colonnes avec valeurs manquantes
+                    missing_counts = data.isnull().sum()
+                    cols_to_process = list(missing_counts[missing_counts > 0].index)
+                    
+                    # Ajouter des colonnes sans valeurs manquantes jusqu'à atteindre max_cols
+                    other_cols = [c for c in data.columns if c not in cols_to_process]
+                    import random
+                    random.shuffle(other_cols)
+                    cols_to_process.extend(other_cols[:max(0, max_cols - len(cols_to_process))])
+                    
+                    # Utiliser seulement ce sous-ensemble
+                    subset_data = data[cols_to_process].copy()
+                    st.write(f"Traitement limité à {len(cols_to_process)} colonnes sur {len(data.columns)} pour des raisons de performance.")
+                    handler = MissingValuesHandler(subset_data)
+                else:
+                    handler = MissingValuesHandler(data)
+                
+                # Mise à jour du message
+                info_msg.info("Application de l'imputation KNN... Cette opération peut prendre du temps.")
+                
+                # Créer une barre de progression
+                progress_bar = st.progress(0)
+                
+                # Fonction pour mettre à jour la progression
+                def update_progress(progress):
+                    progress_bar.progress(int(progress * 100))
+                
+                # Appliquer l'imputation KNN avec callback de progression
+                try:
+                    advanced_data = handler.apply_imputation('knn_imputation', n_neighbors=n_neighbors, progress_callback=update_progress)
+                    
+                    # Si on a utilisé un sous-ensemble, réintégrer les colonnes dans le jeu de données original
+                    if fast_mode and max_cols and len(data.columns) > max_cols:
+                        # Copier les données originales et mettre à jour seulement les colonnes traitées
+                        full_data = data.copy()
+                        for col in cols_to_process:
+                            # Vérifier si la colonne existe encore dans les données traitées 
+                            # (elle pourrait avoir été transformée par one-hot encoding)
+                            if col in advanced_data.columns:
+                                full_data[col] = advanced_data[col]
+                            else:
+                                st.info(f"La colonne {col} a été transformée ou supprimée pendant le traitement.")
+                                # Chercher des colonnes dérivées (après one-hot encoding par exemple)
+                                derived_cols = [c for c in advanced_data.columns if c.startswith(f"{col}_")]
+                                if derived_cols:
+                                    st.info(f"Colonnes dérivées trouvées: {', '.join(derived_cols)}")
+                                    # Ajouter ces colonnes au DataFrame complet
+                                    for derived_col in derived_cols:
+                                        full_data[derived_col] = advanced_data[derived_col]
+                        advanced_data = full_data
+                    
+                    # Finaliser
+                    progress_bar.progress(100)
+                    info_msg.success("Imputation KNN terminée avec succès!")
+                    
+                    treated_data = advanced_data
+                    st.session_state.processed_data = treated_data
+                    
+                    # Afficher les résultats
+                    st.write("Aperçu des données après imputation KNN:")
+                    st.dataframe(treated_data.head())
+                    
+                    # Vérifier les valeurs manquantes restantes
+                    missing_total = data.isnull().sum().sum()
+                    new_missing = treated_data.isnull().sum().sum()
+                    st.success(f"Valeurs manquantes comblées: {missing_total - new_missing} sur {missing_total}")
+                    st.write(f"Valeurs manquantes restantes: {new_missing}")
+                except Exception as e:
+                    info_msg.error(f"Erreur lors de l'imputation KNN: {str(e)}")
+                    st.exception(e)
+        
+        else:  # MICE
+            max_iter = st.slider(
+                "Nombre maximum d'itérations",
+                min_value=1,
+                max_value=50,
+                value=10,
+                step=1,
+                help="Nombre maximum d'itérations pour l'imputation itérative"
+            )
+            
+            if st.button("Appliquer l'imputation MICE"):
+                # Utiliser le module missing_values_handler avec la méthode MICE
+                from .missing_values_handler import MissingValuesHandler
+                
+                # Message d'information sur le traitement
+                info_msg = st.info("Préparation des données pour l'imputation MICE... Veuillez patienter.")
+                
+                # Si mode rapide est activé, sélectionner un sous-ensemble de colonnes
+                if fast_mode and max_cols and len(data.columns) > max_cols:
+                    # Prioriser les colonnes avec valeurs manquantes
+                    missing_counts = data.isnull().sum()
+                    cols_to_process = list(missing_counts[missing_counts > 0].index)
+                    
+                    # Ajouter des colonnes sans valeurs manquantes jusqu'à atteindre max_cols
+                    other_cols = [c for c in data.columns if c not in cols_to_process]
+                    import random
+                    random.shuffle(other_cols)
+                    cols_to_process.extend(other_cols[:max(0, max_cols - len(cols_to_process))])
+                    
+                    # Utiliser seulement ce sous-ensemble
+                    subset_data = data[cols_to_process].copy()
+                    st.write(f"Traitement limité à {len(cols_to_process)} colonnes sur {len(data.columns)} pour des raisons de performance.")
+                    handler = MissingValuesHandler(subset_data)
+                else:
+                    handler = MissingValuesHandler(data)
+                
+                # Mise à jour du message
+                info_msg.info("Application de l'imputation MICE... Cette opération peut prendre du temps.")
+                
+                # Créer une barre de progression
+                progress_bar = st.progress(0)
+                
+                # Fonction pour mettre à jour la progression
+                def update_progress(progress):
+                    progress_bar.progress(int(progress * 100))
+                
+                # Appliquer l'imputation MICE avec callback de progression
+                try:
+                    advanced_data = handler.apply_imputation('iterative_imputation', max_iter=max_iter, progress_callback=update_progress)
+                    
+                    # Si on a utilisé un sous-ensemble, réintégrer les colonnes dans le jeu de données original
+                    if fast_mode and max_cols and len(data.columns) > max_cols:
+                        # Copier les données originales et mettre à jour seulement les colonnes traitées
+                        full_data = data.copy()
+                        for col in cols_to_process:
+                            # Vérifier si la colonne existe encore dans les données traitées 
+                            # (elle pourrait avoir été transformée par one-hot encoding)
+                            if col in advanced_data.columns:
+                                full_data[col] = advanced_data[col]
+                            else:
+                                st.info(f"La colonne {col} a été transformée ou supprimée pendant le traitement.")
+                                # Chercher des colonnes dérivées (après one-hot encoding par exemple)
+                                derived_cols = [c for c in advanced_data.columns if c.startswith(f"{col}_")]
+                                if derived_cols:
+                                    st.info(f"Colonnes dérivées trouvées: {', '.join(derived_cols)}")
+                                    # Ajouter ces colonnes au DataFrame complet
+                                    for derived_col in derived_cols:
+                                        full_data[derived_col] = advanced_data[derived_col]
+                        advanced_data = full_data
+                    
+                    # Finaliser
+                    progress_bar.progress(100)
+                    info_msg.success("Imputation MICE terminée avec succès!")
+                    
+                    treated_data = advanced_data
+                    st.session_state.processed_data = treated_data
+                    
+                    # Afficher les résultats
+                    st.write("Aperçu des données après imputation MICE:")
+                    st.dataframe(treated_data.head())
+                    
+                    # Vérifier les valeurs manquantes restantes
+                    missing_total = data.isnull().sum().sum()
+                    new_missing = treated_data.isnull().sum().sum()
+                    st.success(f"Valeurs manquantes comblées: {missing_total - new_missing} sur {missing_total}")
+                    st.write(f"Valeurs manquantes restantes: {new_missing}")
+                except Exception as e:
+                    info_msg.error(f"Erreur lors de l'imputation MICE: {str(e)}")
+                    st.exception(e)
+    
+    # Onglet 4: Résultats
+    with treatment_tabs[3]:
+        st.write("### Téléchargement et Finalisation")
+        
+        if hasattr(st.session_state, 'processed_data'):
+            treated_data = st.session_state.processed_data
+            
+            # Statistiques après traitement
+            st.write("#### Statistiques après traitement")
+            
+            # Vérifier les valeurs manquantes restantes
+            new_missing = treated_data.isnull().sum().sum()
+            new_missing_by_col = treated_data.isnull().sum()
+            new_missing_cols = new_missing_by_col[new_missing_by_col > 0].index.tolist()
+            
+            # Créer un récapitulatif
+            st.write(f"**Valeurs manquantes comblées:** {missing_total - new_missing} sur {missing_total}")
+            st.write(f"**Taux de complétion:** {((missing_total - new_missing) / missing_total * 100):.2f}%")
+            
+            if new_missing > 0:
+                st.warning(f"**Valeurs manquantes restantes:** {new_missing}")
+                
+                # Afficher les colonnes avec valeurs manquantes restantes
+                st.write("Colonnes avec valeurs manquantes restantes:")
+                st.dataframe(pd.DataFrame({
+                    'Colonne': new_missing_cols,
+                    'Valeurs manquantes': [new_missing_by_col[col] for col in new_missing_cols],
+                    'Pourcentage': [f"{new_missing_by_col[col] / len(treated_data) * 100:.2f}%" for col in new_missing_cols]
+                }))
+            else:
+                st.success("**Toutes les valeurs manquantes ont été traitées !**")
+            
+            # Téléchargement des données traitées
+            st.write("#### Télécharger les données traitées")
+            
+            # Sauvegarder les données traitées en CSV
+            csv = treated_data.to_csv(index=False).encode('utf-8')
+            b64 = base64.b64encode(csv).decode()
+            href = f'<a href="data:file/csv;base64,{b64}" download="donnees_traitees.csv">Télécharger les données traitées (CSV)</a>'
+            st.markdown(href, unsafe_allow_html=True)
+            
+            # Bouton pour finaliser et retourner au traitement
+            if st.button("Finaliser et retourner au traitement", type="primary"):
+                if 'return_to' in st.session_state:
+                    # Effacer le flag de page des valeurs manquantes
+                    del st.session_state.show_missing_values_page
+                    # Conserver les données traitées et le flag de retour
+                    # Ils seront utilisés dans la page principale
+                    st.rerun()
+        else:
+            st.info("Veuillez d'abord appliquer une méthode de traitement des valeurs manquantes.")
+
 def render_ai_methods_tab():
     """Rendre l'onglet des méthodes d'IA dans Streamlit"""
+    # Vérifier si nous devons afficher la page de gestion des valeurs manquantes
+    if hasattr(st.session_state, 'show_missing_values_page') and st.session_state.show_missing_values_page:
+        show_missing_values_interface()
+        return
+    
     st.header("Génération de Données avec l'Intelligence Artificielle")
     
     subtab1, subtab2 = st.tabs(["IA pour Données Synthétiques", "IA pour Données Artificielles"])
@@ -164,8 +642,21 @@ def render_ai_methods_tab():
                     if missing_values > 0:
                         st.warning(f"⚠️ {missing_values} valeurs manquantes détectées dans le jeu de données.")
                         if st.button("Gérer les valeurs manquantes"):
-                            real_data = missing_values_module(real_data)
-                            st.success("Traitement des valeurs manquantes terminé.")
+                            # Créer une page dédiée pour la gestion des valeurs manquantes
+                            st.session_state.show_missing_values_page = True
+                            st.session_state.original_data = real_data.copy()
+                            # Mettre un flag pour indiquer où revenir après traitement
+                            st.session_state.return_to = "ai_methods_tab"
+                            st.rerun()
+                    
+                    # Vérifier si nous revenons du traitement des valeurs manquantes
+                    if hasattr(st.session_state, 'processed_data') and st.session_state.get('return_to') == "ai_methods_tab":
+                        # Récupérer les données traitées
+                        real_data = st.session_state.processed_data
+                        # Nettoyer les variables de session
+                        st.success("🎉 Les valeurs manquantes ont été traitées avec succès !")
+                        del st.session_state.processed_data
+                        del st.session_state.return_to
                     
                     # Afficher un aperçu des données réelles
                     st.subheader("Aperçu des Données Réelles")
