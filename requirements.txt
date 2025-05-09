@@ -8,3 +8,4 @@ scikit-learn>=1.1.0
 pillow>=9.2.0
 mistralai>=0.0.7 
 tensorflow-cpu==2.16.1 # Optional: Only needed for GAN/VAE functionality
+torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
