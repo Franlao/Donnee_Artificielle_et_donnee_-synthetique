@@ -438,13 +438,32 @@ class TabularGAN:
                 # Apply appropriate activations
                 batch_data = FeatureActivation.apply_activations(batch_data, self.metadata)
                 
-                # Move to CPU and convert to numpy
-                generated_data.append(batch_data.cpu().numpy())
+                # Move to CPU and add to list
+                try:
+                    # Try the standard approach first
+                    generated_data.append(batch_data.cpu().numpy())
+                except RuntimeError as e:
+                    if "Numpy is not available" in str(e):
+                        # If NumPy is not available, keep the data as PyTorch tensors
+                        generated_data.append(batch_data.cpu())
+                    else:
+                        # For other errors, re-raise
+                        raise e
             
-            # Concatenate batches
-            generated_data = np.vstack(generated_data)
-        
-        return generated_data
+            # Combine all batches
+            try:
+                # Try to use NumPy if available
+                if isinstance(generated_data[0], np.ndarray):
+                    # All elements are NumPy arrays
+                    return np.vstack(generated_data)
+                else:
+                    # All elements are PyTorch tensors
+                    return torch.cat(generated_data, dim=0).numpy()
+            except (RuntimeError, ImportError):
+                # If NumPy is still not available, return the PyTorch tensor
+                combined_tensor = torch.cat(generated_data, dim=0)
+                print("Warning: NumPy is not available. Returning PyTorch tensor instead of NumPy array.")
+                return combined_tensor
     
     def plot_loss_history(self, figsize: Tuple[int, int] = (10, 6)):
         """

@@ -105,9 +105,12 @@ def show_missing_values_interface():
     # Récupérer les données originales
     data = st.session_state.original_data.copy()
     
+    # Nettoyer les données pour l'affichage
+    clean_data = clean_dataframe_for_display(data)
+    
     # Afficher un aperçu des données originales
     st.subheader("Aperçu des Données")
-    st.dataframe(data.head())
+    st.dataframe(clean_data.head())
     
     # Analyser les valeurs manquantes
     missing_total = data.isnull().sum().sum()
@@ -194,7 +197,7 @@ def show_missing_values_interface():
                 
                 # Montrer un aperçu
                 st.write("Aperçu des données après suppression:")
-                st.dataframe(treated_data.head())
+                st.dataframe(clean_dataframe_for_display(treated_data).head())
                 
                 # Mettre à jour les statistiques de valeurs manquantes
                 new_missing = treated_data.isnull().sum().sum()
@@ -227,7 +230,7 @@ def show_missing_values_interface():
                 
                 # Montrer un aperçu
                 st.write("Aperçu des données après suppression:")
-                st.dataframe(treated_data.head())
+                st.dataframe(clean_dataframe_for_display(treated_data).head())
                 
                 # Mettre à jour les statistiques de valeurs manquantes
                 new_missing = treated_data.isnull().sum().sum()
@@ -299,7 +302,7 @@ def show_missing_values_interface():
             
             # Afficher les résultats
             st.write("Aperçu des données après imputation:")
-            st.dataframe(treated_data.head())
+            st.dataframe(clean_dataframe_for_display(treated_data).head())
             
             # Mettre à jour les statistiques de valeurs manquantes
             new_missing = treated_data.isnull().sum().sum()
@@ -413,7 +416,7 @@ def show_missing_values_interface():
                     
                     # Afficher les résultats
                     st.write("Aperçu des données après imputation KNN:")
-                    st.dataframe(treated_data.head())
+                    st.dataframe(clean_dataframe_for_display(treated_data).head())
                     
                     # Vérifier les valeurs manquantes restantes
                     missing_total = data.isnull().sum().sum()
@@ -503,7 +506,7 @@ def show_missing_values_interface():
                     
                     # Afficher les résultats
                     st.write("Aperçu des données après imputation MICE:")
-                    st.dataframe(treated_data.head())
+                    st.dataframe(clean_dataframe_for_display(treated_data).head())
                     
                     # Vérifier les valeurs manquantes restantes
                     missing_total = data.isnull().sum().sum()
@@ -549,8 +552,9 @@ def show_missing_values_interface():
             # Téléchargement des données traitées
             st.write("#### Télécharger les données traitées")
             
-            # Sauvegarder les données traitées en CSV
-            csv = treated_data.to_csv(index=False).encode('utf-8')
+            # Nettoyer et sauvegarder les données traitées en CSV
+            clean_treated_data = clean_dataframe_for_display(treated_data)
+            csv = clean_treated_data.to_csv(index=False).encode('utf-8')
             b64 = base64.b64encode(csv).decode()
             href = f'<a href="data:file/csv;base64,{b64}" download="donnees_traitees.csv">Télécharger les données traitées (CSV)</a>'
             st.markdown(href, unsafe_allow_html=True)
@@ -565,6 +569,36 @@ def show_missing_values_interface():
                     st.rerun()
         else:
             st.info("Veuillez d'abord appliquer une méthode de traitement des valeurs manquantes.")
+
+def clean_dataframe_for_display(df):
+    """
+    Nettoie un DataFrame pour s'assurer qu'il peut être affiché correctement dans Streamlit.
+    
+    Args:
+        df: Le DataFrame à nettoyer
+        
+    Returns:
+        DataFrame nettoyé avec des types compatibles
+    """
+    # Créer une copie pour éviter de modifier l'original
+    clean_df = df.copy()
+    
+    # Parcourir toutes les colonnes
+    for col in clean_df.columns:
+        # Si la colonne est de type objet, convertir en string
+        if clean_df[col].dtype == 'object':
+            # Essayer de convertir les objets en string
+            try:
+                clean_df[col] = clean_df[col].apply(lambda x: str(x) if x is not None else None)
+            except Exception:
+                # En cas d'échec, remplacer par des chaînes vides
+                clean_df[col] = clean_df[col].apply(lambda x: "" if pd.isna(x) else str(x))
+        
+        # Pour les booléens, convertir en entiers (0/1)
+        elif clean_df[col].dtype == 'bool':
+            clean_df[col] = clean_df[col].astype(int)
+    
+    return clean_df
 
 def render_ai_methods_tab():
     """Rendre l'onglet des méthodes d'IA dans Streamlit"""
@@ -927,18 +961,21 @@ def render_ai_methods_tab():
                                 # Afficher les données générées
                                 st.subheader("Données Synthétiques Générées")
                                 
+                                # Nettoyer le DataFrame pour l'affichage
+                                clean_synthetic_df = clean_dataframe_for_display(synthetic_df)
+                                
                                 # Afficher les données générées
                                 st.write("Aperçu des données synthétiques:")
-                                st.write(synthetic_df.head())
+                                st.write(clean_synthetic_df.head())
                                 
                                 # Afficher les types de données
                                 st.write("Types des colonnes générées:")
-                                st.write(synthetic_df.dtypes)
+                                st.write(clean_synthetic_df.dtypes)
                                 
                                 # Option de téléchargement
                                 st.download_button(
                                     label="Télécharger les Données Synthétiques (CSV)",
-                                    data=synthetic_df.to_csv(index=False).encode('utf-8'),
+                                    data=clean_synthetic_df.to_csv(index=False).encode('utf-8'),
                                     file_name="donnees_synthetiques.csv",
                                     mime="text/csv"
                                 )
@@ -947,13 +984,13 @@ def render_ai_methods_tab():
                                 st.subheader("Visualisations Comparatives")
                                 
                                 for col in metadata.categorical_cols:
-                                    if synthetic_df[col].nunique() < 15:  # Seulement pour les colonnes avec un nombre raisonnable de catégories
-                                        fig = visualize_categorical_comparison(real_data, synthetic_df, col)
+                                    if clean_synthetic_df[col].nunique() < 15:  # Seulement pour les colonnes avec un nombre raisonnable de catégories
+                                        fig = visualize_categorical_comparison(real_data, clean_synthetic_df, col)
                                         st.pyplot(fig)
 
                                 # Pour les colonnes numériques
                                 for col in metadata.numeric_cols:
-                                    fig = visualize_numeric_comparison(real_data, synthetic_df, col)
+                                    fig = visualize_numeric_comparison(real_data, clean_synthetic_df, col)
                                     st.pyplot(fig)
                                 
                                 # Statistiques descriptives
@@ -968,7 +1005,7 @@ def render_ai_methods_tab():
                                     
                                     with col2:
                                         st.write("**Données synthétiques:**")
-                                        st.write(synthetic_df[metadata.numeric_cols].describe())
+                                        st.write(clean_synthetic_df[metadata.numeric_cols].describe())
                                 
                             except Exception as e:
                                 st.error(f"Une erreur s'est produite: {str(e)}")

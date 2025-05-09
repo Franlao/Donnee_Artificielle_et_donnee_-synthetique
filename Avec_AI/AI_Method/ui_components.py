@@ -10,6 +10,25 @@ import json
 
 from .llm_generator import MistralGenerator, MISTRAL_AVAILABLE
 
+def clean_dataframe_for_display(df_input: pd.DataFrame) -> pd.DataFrame:
+    """
+    Nettoie un DataFrame pour s'assurer qu'il peut être affiché correctement dans Streamlit
+    en convertissant les colonnes problématiques en types compatibles avec Arrow.
+    """
+    df = df_input.copy()
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            # Convertit tous les éléments en chaîne, gérant None/NaN en chaînes vides
+            # Puis s'assure que toute la colonne est de type string.
+            df[col] = df[col].apply(lambda x: str(x) if pd.notna(x) else '').astype(str)
+        elif df[col].dtype == 'bool':
+            df[col] = df[col].astype(int)
+        # Gérer d'autres types non standard si nécessaire à l'avenir
+        # Par exemple, les colonnes de type 'category' peuvent parfois causer des soucis
+        # if df[col].dtype.name == 'category':
+        #     df[col] = df[col].astype(str)
+    return df
+
 def render_llm_tab():
     """Fonction pour rendre l'onglet de génération de données avec LLM"""
     st.write("""
@@ -219,15 +238,18 @@ def render_llm_tab():
                     if error:
                         st.error(f"Erreur lors de la génération des données: {error}")
                     else:
+                        # Nettoyer le DataFrame avant de l'utiliser
+                        generated_df_cleaned = clean_dataframe_for_display(generated_df)
+
                         # Afficher les données générées
                         st.subheader("Données Générées")
                         st.success(f"Génération réussie en {generation_time:.2f} secondes")
-                        st.write(generated_df)
+                        st.write(generated_df_cleaned) # Utiliser le DF nettoyé
                         
                         # Option de téléchargement
                         st.download_button(
                             label="Télécharger les Données Générées (CSV)",
-                            data=generated_df.to_csv(index=False).encode('utf-8'),
+                            data=generated_df_cleaned.to_csv(index=False).encode('utf-8'), # Utiliser le DF nettoyé
                             file_name="donnees_generees_llm.csv",
                             mime="text/csv"
                         )
@@ -235,56 +257,54 @@ def render_llm_tab():
                         # Visualisations
                         st.subheader("Analyse et Visualisations")
                         
-                        # Détection automatique des types de colonnes
+                        # Détection automatique des types de colonnes à partir du DF nettoyé
                         numeric_cols = []
                         categorical_cols = []
-                        for col in generated_df.columns:
-                            if pd.api.types.is_numeric_dtype(generated_df[col]):
+                        for col in generated_df_cleaned.columns:
+                            # Essayer de convertir en numérique pour la détection, au cas où le nettoyage l'aurait rendu string
+                            try:
+                                pd.to_numeric(generated_df_cleaned[col])
                                 numeric_cols.append(col)
-                            else:
+                            except ValueError:
                                 categorical_cols.append(col)
                         
                         # Statistiques de base
                         if numeric_cols:
                             st.write("#### Statistiques descriptives")
-                            st.write(generated_df[numeric_cols].describe())
+                            # Assurez-vous que .describe() est aussi nettoyé avant l'affichage
+                            described_data = generated_df_cleaned[numeric_cols].describe().reset_index()
+                            st.write(clean_dataframe_for_display(described_data))
                         
                         # Créer des visualisations
                         if numeric_cols:
                             st.write("#### Distributions des variables numériques")
-                            # Afficher des histogrammes pour les colonnes numériques
                             for col in numeric_cols:
                                 fig, ax = plt.subplots(figsize=(10, 6))
-                                sns.histplot(generated_df[col], kde=True, ax=ax)
+                                # Utiliser pd.to_numeric pour s'assurer que la colonne est traitable par sns.histplot
+                                sns.histplot(pd.to_numeric(generated_df_cleaned[col], errors='coerce').dropna(), kde=True, ax=ax)
                                 ax.set_title(f"Distribution de {col}")
                                 st.pyplot(fig)
                             
-                            # Matrice de corrélation
                             if len(numeric_cols) > 1:
                                 st.write("#### Matrice de corrélation")
                                 fig, ax = plt.subplots(figsize=(10, 8))
-                                correlation_matrix = generated_df[numeric_cols].corr()
+                                # S'assurer que les données pour la corrélation sont numériques
+                                numeric_df_for_corr = generated_df_cleaned[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                                correlation_matrix = numeric_df_for_corr.corr()
                                 sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', ax=ax)
                                 st.pyplot(fig)
                         
-                        # Colonnes catégorielles
                         if categorical_cols:
                             st.write("#### Distributions des variables catégorielles")
                             for col in categorical_cols:
-                                # Vérifier si c'est une liste (comme medical_history)
-                                if generated_df[col].dtype == 'object' and generated_df[col].apply(lambda x: isinstance(x, list)).any():
-                                    # Aplatir les listes
+                                if generated_df_cleaned[col].dtype == 'object' and generated_df_cleaned[col].apply(lambda x: isinstance(x, list)).any():
                                     all_items = []
-                                    for items in generated_df[col].dropna():
+                                    for items in generated_df_cleaned[col].dropna():
                                         if isinstance(items, list):
                                             all_items.extend(items)
                                         else:
                                             all_items.append(items)
-                                    
-                                    # Compter les occurrences
                                     item_counts = pd.Series(all_items).value_counts()
-                                    
-                                    # Créer un graphique à barres
                                     fig, ax = plt.subplots(figsize=(12, 6))
                                     item_counts.plot(kind='bar', ax=ax)
                                     ax.set_title(f"Fréquence des éléments dans {col}")
@@ -293,46 +313,40 @@ def render_llm_tab():
                                     plt.tight_layout()
                                     st.pyplot(fig)
                                 else:
-                                    # Graphique à barres pour les catégories
                                     fig, ax = plt.subplots(figsize=(10, 6))
-                                    value_counts = generated_df[col].value_counts()
-                                    sns.barplot(x=value_counts.index, y=value_counts.values, ax=ax)
+                                    value_counts = generated_df_cleaned[col].value_counts()
+                                    # S'assurer que l'index est de type string pour le barplot
+                                    sns.barplot(x=value_counts.index.astype(str), y=value_counts.values, ax=ax)
                                     ax.set_title(f"Distribution de {col}")
                                     plt.xticks(rotation=45, ha='right')
                                     plt.tight_layout()
                                     st.pyplot(fig)
                         
-                        # Analyse spécifique pour les données médicales
-                        if 'diabetes' in generated_df.columns and 'glucose_level' in generated_df.columns:
+                        if 'diabetes' in generated_df_cleaned.columns and 'glucose_level' in generated_df_cleaned.columns:
                             st.write("#### Analyse de la glycémie par statut diabétique")
-                            
-                            # Convertir en numérique si nécessaire
-                            if generated_df['diabetes'].dtype == object:
-                                generated_df['diabetes'] = generated_df['diabetes'].astype(str).map({'True': 1, 'true': 1, '1': 1, 'False': 0, 'false': 0, '0': 0}).astype(int)
-                            
-                            # Boxplot
+                            # S'assurer que les colonnes sont des types corrects pour l'analyse
+                            temp_df_analysis = generated_df_cleaned.copy()
+                            temp_df_analysis['diabetes'] = pd.to_numeric(temp_df_analysis['diabetes'], errors='coerce').fillna(0).astype(int)
+                            temp_df_analysis['glucose_level'] = pd.to_numeric(temp_df_analysis['glucose_level'], errors='coerce')
+
                             fig, ax = plt.subplots(figsize=(10, 6))
-                            sns.boxplot(x='diabetes', y='glucose_level', data=generated_df, ax=ax)
+                            sns.boxplot(x='diabetes', y='glucose_level', data=temp_df_analysis, ax=ax)
                             ax.set_title("Niveaux de glucose par statut diabétique")
                             ax.set_xlabel("Diabétique (1=Oui, 0=Non)")
                             ax.set_ylabel("Niveau de glucose (mg/dL)")
                             st.pyplot(fig)
                             
-                            # Statistiques
-                            glucose_by_diabetes = generated_df.groupby('diabetes')['glucose_level'].describe()
+                            glucose_by_diabetes = temp_df_analysis.groupby('diabetes')['glucose_level'].describe().reset_index()
                             st.write("Statistiques de glucose par statut diabétique:")
-                            st.write(glucose_by_diabetes)
+                            st.write(clean_dataframe_for_display(glucose_by_diabetes))
                             
-                            # Vérifier le pourcentage de diabétiques
-                            diabetic_percent = generated_df['diabetes'].mean() * 100
+                            diabetic_percent = temp_df_analysis['diabetes'].mean() * 100
                             st.write(f"Pourcentage de patients diabétiques: {diabetic_percent:.1f}%")
                             
-                            # Vérifier si les diabétiques ont une glycémie > 126
-                            diabetic_patients = generated_df[generated_df['diabetes'] == 1]
+                            diabetic_patients = temp_df_analysis[temp_df_analysis['diabetes'] == 1]
                             if not diabetic_patients.empty:
                                 high_glucose_percent = (diabetic_patients['glucose_level'] > 126).mean() * 100
                                 st.write(f"Pourcentage de diabétiques avec glucose > 126 mg/dL: {high_glucose_percent:.1f}%")
-                                
                                 if high_glucose_percent < 80:
                                     st.warning("⚠️ Attention: Certains patients diabétiques ont une glycémie normale, ce qui est inhabituel.")
                 
@@ -380,14 +394,28 @@ def visualize_categorical_comparison(real_data, synthetic_df, col):
     
     # Convertir la colonne en chaîne dans les deux DataFrames pour éviter les problèmes de type
     real_col = real_data[col].astype(str)
-    synth_col = synthetic_df[col].astype(str)
+    # Utiliser le DataFrame synthétique déjà nettoyé si possible, sinon nettoyer ici
+    synth_col_cleaned = clean_dataframe_for_display(synthetic_df[[col]])[col].astype(str)
     
     # Compter les catégories
     real_counts = real_col.value_counts(normalize=True)
-    synth_counts = synth_col.value_counts(normalize=True)
+    synth_counts = synth_col_cleaned.value_counts(normalize=True)
     
     # S'assurer que les deux séries ont les mêmes indices
     all_categories = sorted(set(real_counts.index) | set(synth_counts.index))
+    
+    # Limiter le nombre de catégories à afficher si trop nombreuses
+    if len(all_categories) > 20:
+        # Trouver les catégories les plus fréquentes
+        top_real = set(real_counts.nlargest(10).index)
+        top_synth = set(synth_counts.nlargest(10).index)
+        # Combiner les catégories les plus fréquentes
+        all_categories = sorted(list(top_real.union(top_synth))) # Ensure list for bar_positions
+        
+        # Ajouter une note au titre
+        ax.set_title(f'Comparaison de la distribution (top catégories) pour {col}')
+    else:
+        ax.set_title(f'Comparaison de la distribution des catégories pour {col}')
     
     # Créer un DataFrame de comparaison en s'assurant que tous les indices sont présents
     compare_data = {
@@ -407,10 +435,17 @@ def visualize_categorical_comparison(real_data, synthetic_df, col):
         value_name='Proportion'
     )
     
-    # Graphique
+    # Graphique avec positions fixes pour éviter les avertissements
+    if all_categories: # Ensure all_categories is not empty
+        bar_positions = np.arange(len(all_categories))
+        ax.set_xticks(bar_positions)
+        ax.set_xticklabels(all_categories, rotation=45, ha='right')
+    
+    # Utiliser barplot avec des positions explicites
     sns.barplot(x='Catégorie', y='Proportion', hue='Type de Données', data=compare_df_long, ax=ax)
-    ax.set_title(f'Comparaison de la distribution des catégories pour {col}')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+    
+    # Ajuster la mise en page
+    plt.tight_layout()
     
     return fig
 
@@ -420,15 +455,49 @@ def visualize_numeric_comparison(real_data, synthetic_df, col):
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Histogramme des données réelles
-    sns.histplot(real_data[col], color='blue', alpha=0.5, 
-                label='Données réelles', kde=True, ax=ax)
-    
-    # Histogramme des données synthétiques
-    sns.histplot(synthetic_df[col], color='red', alpha=0.5,
-                label='Données synthétiques', kde=True, ax=ax)
-    
-    ax.set_title(f'Comparaison des distributions pour {col}')
-    ax.legend()
+    # S'assurer que les données sont numériques
+    try:
+        real_values = pd.to_numeric(real_data[col], errors='coerce').dropna()
+        # Utiliser le DataFrame synthétique déjà nettoyé si possible, sinon nettoyer ici
+        synth_values_cleaned_series = pd.to_numeric(clean_dataframe_for_display(synthetic_df[[col]])[col], errors='coerce').dropna()
+
+        if real_values.empty and synth_values_cleaned_series.empty:
+            ax.text(0.5, 0.5, "Pas de données numériques valides à afficher.", ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(f"Pas de données pour {col}")
+            return fig
+
+        real_mean = real_values.mean() if not real_values.empty else np.nan
+        synth_mean = synth_values_cleaned_series.mean() if not synth_values_cleaned_series.empty else np.nan
+        real_std = real_values.std() if not real_values.empty else np.nan
+        synth_std = synth_values_cleaned_series.std() if not synth_values_cleaned_series.empty else np.nan
+        
+        # Histogramme des données réelles avec KDE
+        if not real_values.empty:
+            sns.histplot(real_values, color='blue', alpha=0.5, 
+                        label=f'Données réelles (moy={real_mean:.2f}, std={real_std:.2f})', 
+                        kde=True, ax=ax)
+            ax.axvline(real_mean, color='blue', linestyle='--', alpha=0.7)
+
+        # Histogramme des données synthétiques avec KDE
+        if not synth_values_cleaned_series.empty:
+            sns.histplot(synth_values_cleaned_series, color='red', alpha=0.5,
+                        label=f'Données synthétiques (moy={synth_mean:.2f}, std={synth_std:.2f})', 
+                        kde=True, ax=ax)
+            ax.axvline(synth_mean, color='red', linestyle='--', alpha=0.7)
+        
+        ax.set_title(f'Comparaison des distributions pour {col}')
+        
+        # Ajuster la légende pour qu'elle soit bien visible
+        if not real_values.empty or not synth_values_cleaned_series.empty:
+            ax.legend(loc='upper right', frameon=True, framealpha=0.9)
+        
+        # Ajuster la mise en page
+        plt.tight_layout()
+        
+    except Exception as e:
+        # En cas d'erreur, afficher un graphique d'erreur
+        ax.text(0.5, 0.5, f"Erreur de visualisation: {str(e)}",
+                ha='center', va='center', transform=ax.transAxes)
+        ax.set_title(f"Impossible de visualiser la colonne {col}")
     
     return fig

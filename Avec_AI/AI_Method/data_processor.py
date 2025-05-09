@@ -359,10 +359,41 @@ class DataProcessor:
         return preprocessed_data, metadata
     
     @staticmethod
-    def inverse_transform(synthetic_data: np.ndarray, metadata: DatasetMetadata) -> pd.DataFrame:
+    def inverse_transform(synthetic_data: Union[np.ndarray, 'torch.Tensor'], metadata: DatasetMetadata) -> pd.DataFrame:
         """
         Convertir les données synthétiques au format d'origine avec le bon typage
+        
+        Args:
+            synthetic_data: Données synthétiques (numpy array ou tenseur PyTorch)
+            metadata: Métadonnées du jeu de données
+            
+        Returns:
+            DataFrame avec les données transformées
         """
+        # Convertir le tenseur PyTorch en numpy array si nécessaire
+        if not isinstance(synthetic_data, np.ndarray):
+            try:
+                # Tenter d'importer torch pour vérifier si c'est un tenseur PyTorch
+                import torch
+                if isinstance(synthetic_data, torch.Tensor):
+                    try:
+                        # Essayer de convertir en numpy
+                        synthetic_data = synthetic_data.cpu().numpy()
+                    except RuntimeError as e:
+                        # Si NumPy n'est pas disponible, on utilise une approche alternative
+                        if "Numpy is not available" in str(e):
+                            print("Attention: NumPy n'est pas disponible pour la conversion PyTorch → NumPy.")
+                            print("Tentative de conversion manuelle des données...")
+                            
+                            # Convertir manuellement (version simplifiée)
+                            synthetic_data = synthetic_data.cpu().tolist()
+                            synthetic_data = np.array(synthetic_data)
+                        else:
+                            raise e
+            except ImportError:
+                # Si torch n'est pas disponible mais qu'on a passé un objet qui n'est pas numpy
+                raise ValueError("Les données synthétiques doivent être un tableau NumPy ou un tenseur PyTorch")
+        
         # Initialiser un DataFrame vide
         result_df = pd.DataFrame()
         
