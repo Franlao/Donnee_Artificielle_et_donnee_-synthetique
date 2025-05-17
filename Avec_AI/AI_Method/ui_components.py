@@ -10,23 +10,41 @@ import json
 
 from .llm_generator import MistralGenerator, MISTRAL_AVAILABLE
 
-def clean_dataframe_for_display(df_input: pd.DataFrame) -> pd.DataFrame:
+def clean_dataframe_for_display(df):
     """
-    Nettoie un DataFrame pour s'assurer qu'il peut être affiché correctement dans Streamlit
-    en convertissant les colonnes problématiques en types compatibles avec Arrow.
+    Nettoie un DataFrame pour s'assurer qu'il peut être affiché correctement.
     """
-    df = df_input.copy()
+    # Créer une copie pour éviter de modifier l'original
+    df = df.copy()
+    
+    # Parcourir toutes les colonnes
     for col in df.columns:
+        # Vérifier le type de la colonne
         if df[col].dtype == 'object':
-            # Convertit tous les éléments en chaîne, gérant None/NaN en chaînes vides
-            # Puis s'assure que toute la colonne est de type string.
-            df[col] = df[col].apply(lambda x: str(x) if pd.notna(x) else '').astype(str)
-        elif df[col].dtype == 'bool':
-            df[col] = df[col].astype(int)
-        # Gérer d'autres types non standard si nécessaire à l'avenir
-        # Par exemple, les colonnes de type 'category' peuvent parfois causer des soucis
-        # if df[col].dtype.name == 'category':
-        #     df[col] = df[col].astype(str)
+            # Traiter les valeurs de la colonne une par une
+            cleaned_values = []
+            for value in df[col]:
+                # Vérifier si la valeur est un array-like ou un objet complexe
+                try:
+                    # Si c'est un array-like, le convertir en chaîne de façon sécurisée
+                    if hasattr(value, '__len__') and not isinstance(value, (str, int, float, bool)):
+                        cleaned_values.append(str(value))
+                    # Sinon, utiliser la logique normale
+                    elif pd.isna(value):
+                        cleaned_values.append('')
+                    else:
+                        cleaned_values.append(str(value))
+                except:
+                    # En cas d'erreur, utiliser une chaîne vide ou une valeur par défaut
+                    cleaned_values.append('[Complex Object]')
+            
+            # Assigner les valeurs nettoyées à la colonne
+            df[col] = cleaned_values
+        
+        # Pour les colonnes non-object, convertir les NaN en chaînes vides
+        else:
+            df[col] = df[col].fillna('').astype(str)
+    
     return df
 
 def render_llm_tab():
